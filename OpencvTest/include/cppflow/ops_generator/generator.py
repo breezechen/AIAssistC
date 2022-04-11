@@ -48,25 +48,35 @@ class Attribute:
         # Warp list attributes in a C++ vector
         if self.islist:
             cpptype = cpptype.replace('&', '') # Not inner reference types
-            cpptype = 'const std::vector<{}>&'.format(cpptype.replace('const', ''))
+            cpptype = f"const std::vector<{cpptype.replace('const', '')}>&"
 
 
         # Get the default value for the attribute
         # Not yet supported for lists
         # Not supported for tensors or shape
         if self.default and not self.islist and self.type not in ['shape', 'tensor']:   
-            cppdefault = '=' + {
-                'int'    : str(self.attr.default_value.i),
-                'bool'   : str(self.attr.default_value.b).lower(),
-                'string' : '"' + str(self.attr.default_value.s)[2:-1] + '"',
-                'float'  : '{:.4e}'.format(self.attr.default_value.f).replace('inf', 'std::numeric_limits<float>::infinity()'),
-                'type'   : 'static_cast<datatype>({})'.format(self.attr.default_value.type)
-            }[self.type]
+            cppdefault = (
+                '='
+                + {
+                    'int': str(self.attr.default_value.i),
+                    'bool': str(self.attr.default_value.b).lower(),
+                    'string': '"' + str(self.attr.default_value.s)[2:-1] + '"',
+                    'float': '{:.4e}'.format(self.attr.default_value.f).replace(
+                        'inf', 'std::numeric_limits<float>::infinity()'
+                    ),
+                    'type': f'static_cast<datatype>({self.attr.default_value.type})',
+                }[self.type]
+            )
+
         else:
             cppdefault = ''
 
         # datatype name=defaultval
-        return cpptype + ' ' + self.name.replace('template', 'template_arg') + cppdefault
+        return (
+            f'{cpptype} '
+            + self.name.replace('template', 'template_arg')
+            + cppdefault
+        )
 
     def code(self):
 
@@ -127,7 +137,7 @@ class Operation:
         # More than one output?
         if len(self.op.output_arg) != 1: raise Exception("More than one or no output not yet supported")
 
-        self.inputs = [inp for inp in op.input_arg]
+        self.inputs = list(op.input_arg)
 
         # Number attributes define the length of an input list
         number_attr = [(i.number_attr, i) for i in self.inputs if len(i.number_attr) > 0]
@@ -183,12 +193,19 @@ class Operation:
         snk = re.sub(r'(?<!^)(?=[A-Z])', '_', self.op.name).lower().replace('const', 'const_tensor')
 
         # Required input arguments
-        inp = ', '.join(['const std::vector<tensor>&{}'.format(n.name) if len(n.number_attr) or len(n.type_list_attr) else 
-                 'const tensor& {}'.format(n.name.replace('tensor', 'input_tensor')) for i, n in enumerate(self.inputs)])
+        inp = ', '.join(
+            [
+                f'const std::vector<tensor>&{n.name}'
+                if len(n.number_attr) or len(n.type_list_attr)
+                else f"const tensor& {n.name.replace('tensor', 'input_tensor')}"
+                for n in self.inputs
+            ]
+        )
+
 
         # Declaration of attributes
         atr = ', '.join(a.declaration() for a in self.attr_list if len(a.declaration()))
-        atr = (', ' + atr) if inp != '' and atr != '' else atr
+        atr = f', {atr}' if inp != '' and atr != '' else atr
 
         # Operation original name
         opn = self.op.name
@@ -253,8 +270,8 @@ for op_name in sorted(dir(tf.raw_ops)):
 
             # Grab operation definition
             op = [op for op in ops.op if op.name == op_name]
-            if len(op) == 0: raise Exception("Operation not found")
-            
+            if not op: raise Exception("Operation not found")
+
             op = Operation(op[0])
 
             ops_code += op.code()
